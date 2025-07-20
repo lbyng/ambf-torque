@@ -1,2 +1,5 @@
 data/
-test_data/
+test_results/
+simple_models/
+
+__pycache__/
