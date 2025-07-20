@@ -141,23 +141,33 @@ def create_extended_features(data):
     jpos_d = data[:, 194:197]  # 关节期望位置 [0:3]
     
     # 组合特征（不包含control_command，因为会在derived features中作为pos_error添加）
+    # features = np.hstack([
+    #     jpos,            # 3 features - 关节实际位置
+    #     jvel,            # 3 features - 关节速度
+    #     pos_d,           # 6 features - 笛卡尔期望位置
+    #     mpos,            # 3 features - 电机位置
+    #     mvel,            # 3 features - 电机速度
+    #     jpos_d           # 3 features - 关节期望位置
+    # ])
+
     features = np.hstack([
         jpos,            # 3 features - 关节实际位置
-        jvel,            # 3 features - 关节速度
-        pos_d,           # 6 features - 笛卡尔期望位置
-        mpos,            # 3 features - 电机位置
-        mvel,            # 3 features - 电机速度
-        jpos_d           # 3 features - 关节期望位置
+        jvel            # 3 features - 关节速度
     ])
     
     # 特征名称
+    # feature_names = [
+    #     'jpos[0]', 'jpos[1]', 'jpos[2]',
+    #     'jvel[0]', 'jvel[1]', 'jvel[2]',
+    #     'pos_d[0]', 'pos_d[1]', 'pos_d[2]', 'pos_d[3]', 'pos_d[4]', 'pos_d[5]',
+    #     'mpos[0]', 'mpos[1]', 'mpos[2]',
+    #     'mvel[0]', 'mvel[1]', 'mvel[2]',
+    #     'jpos_d[0]', 'jpos_d[1]', 'jpos_d[2]'
+    # ]
+
     feature_names = [
         'jpos[0]', 'jpos[1]', 'jpos[2]',
-        'jvel[0]', 'jvel[1]', 'jvel[2]',
-        'pos_d[0]', 'pos_d[1]', 'pos_d[2]', 'pos_d[3]', 'pos_d[4]', 'pos_d[5]',
-        'mpos[0]', 'mpos[1]', 'mpos[2]',
-        'mvel[0]', 'mvel[1]', 'mvel[2]',
-        'jpos_d[0]', 'jpos_d[1]', 'jpos_d[2]'
+        'jvel[0]', 'jvel[1]', 'jvel[2]'
     ]
     
     return features, feature_names
@@ -210,39 +220,39 @@ def calculate_derived_features(data, dt=0.001):
     
     derived = {}
     
-    # 1. 关节加速度 (通过数值微分)
-    jacc = np.zeros_like(jvel)
-    jacc[1:] = (jvel[1:] - jvel[:-1]) / dt
-    jacc[0] = jacc[1]  # 第一个点使用第二个点的值
-    derived['jacc'] = jacc
+    # # 1. 关节加速度 (通过数值微分)
+    # jacc = np.zeros_like(jvel)
+    # jacc[1:] = (jvel[1:] - jvel[:-1]) / dt
+    # jacc[0] = jacc[1]  # 第一个点使用第二个点的值
+    # derived['jacc'] = jacc
     
     # 2. 位置误差
     pos_error = jpos_d - jpos
     derived['pos_error'] = pos_error
     
-    # 3. 速度误差 (期望速度为0)
-    vel_error = -jvel  # 假设期望速度为0
-    derived['vel_error'] = vel_error
+    # # 3. 速度误差 (期望速度为0)
+    # vel_error = -jvel  # 假设期望速度为0
+    # derived['vel_error'] = vel_error
     
-    # 4. 误差变化率
-    error_rate = np.zeros_like(pos_error)
-    error_rate[1:] = (pos_error[1:] - pos_error[:-1]) / dt
-    error_rate[0] = error_rate[1]
-    derived['error_rate'] = error_rate
+    # # 4. 误差变化率
+    # error_rate = np.zeros_like(pos_error)
+    # error_rate[1:] = (pos_error[1:] - pos_error[:-1]) / dt
+    # error_rate[0] = error_rate[1]
+    # derived['error_rate'] = error_rate
     
-    # 5. 累积误差 (积分项)
-    error_integral = np.cumsum(pos_error * dt, axis=0)
-    derived['error_integral'] = error_integral
+    # # 5. 累积误差 (积分项)
+    # error_integral = np.cumsum(pos_error * dt, axis=0)
+    # derived['error_integral'] = error_integral
     
-    # 6. 运动状态特征
-    motion_magnitude = np.linalg.norm(jvel, axis=1, keepdims=True)
-    derived['motion_magnitude'] = np.tile(motion_magnitude, (1, 3))
+    # # 6. 运动状态特征
+    # motion_magnitude = np.linalg.norm(jvel, axis=1, keepdims=True)
+    # derived['motion_magnitude'] = np.tile(motion_magnitude, (1, 3))
     
-    # 7. 加速度变化率 (jerk)
-    jerk = np.zeros_like(jacc)
-    jerk[1:] = (jacc[1:] - jacc[:-1]) / dt
-    jerk[0] = jerk[1]
-    derived['jerk'] = jerk
+    # # 7. 加速度变化率 (jerk)
+    # jerk = np.zeros_like(jacc)
+    # jerk[1:] = (jacc[1:] - jacc[:-1]) / dt
+    # jerk[0] = jerk[1]
+    # derived['jerk'] = jerk
     
     return derived
 
@@ -273,7 +283,8 @@ def create_time_sequences(features, targets, sequence_length=10, step=1):
     n_targets = targets.shape[1]
     
     # 计算序列数量
-    n_sequences = (n_samples - sequence_length) // step + 1
+    # n_sequences = (n_samples - sequence_length) // step + 1
+    n_sequences = (n_samples - sequence_length) // step
     
     # 初始化序列数组
     X_sequences = np.zeros((n_sequences, sequence_length, n_features))
@@ -285,7 +296,8 @@ def create_time_sequences(features, targets, sequence_length=10, step=1):
         end_idx = start_idx + sequence_length
         
         X_sequences[i] = features[start_idx:end_idx]
-        y_sequences[i] = targets[end_idx - 1]  # 预测序列最后一个时刻的tau
+        # y_sequences[i] = targets[end_idx - 1]
+        y_sequences[i] = targets[end_idx]  #TODO
     
     return X_sequences, y_sequences
 

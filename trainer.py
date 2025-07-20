@@ -45,6 +45,10 @@ class SimpleTrainer:
     """简化的训练器"""
     
     def __init__(self, learning_rate=0.001, batch_size=64, num_epochs=50):
+        torch.manual_seed(2025)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(2025)
+
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.num_epochs = num_epochs
@@ -71,8 +75,11 @@ class SimpleTrainer:
         # 创建数据加载器
         train_dataset = TensorDataset(X_train, y_train)
         val_dataset = TensorDataset(X_val, y_val)
+
+        generator = torch.Generator()
+        generator.manual_seed(2025)
         
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, generator=generator)
         val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False)
         
         # 创建模型
