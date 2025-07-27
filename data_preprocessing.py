@@ -118,7 +118,7 @@ class DataSmoother:
 # ========== 特征工程函数 ==========
 def create_extended_features(data):
     """
-    创建扩展特征（包含关节期望位置，pos_error会在derived features中添加）
+    创建扩展特征
     
     Parameters:
     -----------
@@ -128,71 +128,26 @@ def create_extended_features(data):
     Returns:
     --------
     features : np.ndarray
-        处理后的特征
+        处理后的特征 [jpos, jvel, jpos_d]
     feature_names : list
         特征名称列表
     """
-    # 提取需要的原始特征
+    # 提取核心特征
     jpos = data[:, 13:16]      # 关节位置 [0:3]
-    jvel = data[:, 162:165]    # 关节速度 [0:3]
-    pos_d = data[:, 76:82]     # 笛卡尔期望位置
-    mpos = data[:, 130:133]    # 电机位置 [0:3]
-    mvel = data[:, 146:149]    # 电机速度 [0:3]
-    jpos_d = data[:, 194:197]  # 关节期望位置 [0:3]
+    jvel = data[:, 162:165]    # 关节速度 [3:6]
+    jpos_d = data[:, 194:197]  # 关节期望位置 [6:9]
     
-    # 组合特征（不包含control_command，因为会在derived features中作为pos_error添加）
-    # features = np.hstack([
-    #     jpos,            # 3 features - 关节实际位置
-    #     jvel,            # 3 features - 关节速度
-    #     pos_d,           # 6 features - 笛卡尔期望位置
-    #     mpos,            # 3 features - 电机位置
-    #     mvel,            # 3 features - 电机速度
-    #     jpos_d           # 3 features - 关节期望位置
-    # ])
-
+    # 组合特征
     features = np.hstack([
         jpos,            # 3 features - 关节实际位置
-        jvel            # 3 features - 关节速度
+        jvel,            # 3 features - 关节速度
+        jpos_d           # 3 features - 关节期望位置
     ])
     
     # 特征名称
-    # feature_names = [
-    #     'jpos[0]', 'jpos[1]', 'jpos[2]',
-    #     'jvel[0]', 'jvel[1]', 'jvel[2]',
-    #     'pos_d[0]', 'pos_d[1]', 'pos_d[2]', 'pos_d[3]', 'pos_d[4]', 'pos_d[5]',
-    #     'mpos[0]', 'mpos[1]', 'mpos[2]',
-    #     'mvel[0]', 'mvel[1]', 'mvel[2]',
-    #     'jpos_d[0]', 'jpos_d[1]', 'jpos_d[2]'
-    # ]
-
-    feature_names = [
-        'jpos[0]', 'jpos[1]', 'jpos[2]',
-        'jvel[0]', 'jvel[1]', 'jvel[2]'
-    ]
-    
-    return features, feature_names
-
-def create_original_features(data):
-    """
-    创建原始特征（不包含控制命令）
-    """
-    feature_select = np.concatenate([
-        np.arange(13, 16),   # jpos[0:3]
-        np.arange(162, 165), # jvel[0:3]
-        np.arange(76, 82),   # pos_d
-        np.arange(130, 133), # mpos[0:3]
-        np.arange(146, 149), # mvel[0:3]
-        np.arange(194, 197), # jpos_d[0:3]
-    ])
-    
-    features = data[:, feature_select]
-    
     feature_names = [
         'jpos[0]', 'jpos[1]', 'jpos[2]',
         'jvel[0]', 'jvel[1]', 'jvel[2]',
-        'pos_d[0]', 'pos_d[1]', 'pos_d[2]', 'pos_d[3]', 'pos_d[4]', 'pos_d[5]',
-        'mpos[0]', 'mpos[1]', 'mpos[2]',
-        'mvel[0]', 'mvel[1]', 'mvel[2]',
         'jpos_d[0]', 'jpos_d[1]', 'jpos_d[2]'
     ]
     
@@ -200,7 +155,7 @@ def create_original_features(data):
 
 def calculate_derived_features(data, dt=0.001):
     """
-    计算衍生特征（加速度、误差积分等）
+    计算衍生特征
     
     Parameters:
     -----------
@@ -215,89 +170,90 @@ def calculate_derived_features(data, dt=0.001):
         衍生特征字典
     """
     jpos = data[:, 13:16]
-    jvel = data[:, 162:165]
     jpos_d = data[:, 194:197]
     
     derived = {}
     
-    # # 1. 关节加速度 (通过数值微分)
-    # jacc = np.zeros_like(jvel)
-    # jacc[1:] = (jvel[1:] - jvel[:-1]) / dt
-    # jacc[0] = jacc[1]  # 第一个点使用第二个点的值
-    # derived['jacc'] = jacc
-    
-    # 2. 位置误差
+    # 位置误差
     pos_error = jpos_d - jpos
     derived['pos_error'] = pos_error
     
-    # # 3. 速度误差 (期望速度为0)
-    # vel_error = -jvel  # 假设期望速度为0
-    # derived['vel_error'] = vel_error
-    
-    # # 4. 误差变化率
-    # error_rate = np.zeros_like(pos_error)
-    # error_rate[1:] = (pos_error[1:] - pos_error[:-1]) / dt
-    # error_rate[0] = error_rate[1]
-    # derived['error_rate'] = error_rate
-    
-    # # 5. 累积误差 (积分项)
-    # error_integral = np.cumsum(pos_error * dt, axis=0)
-    # derived['error_integral'] = error_integral
-    
-    # # 6. 运动状态特征
-    # motion_magnitude = np.linalg.norm(jvel, axis=1, keepdims=True)
-    # derived['motion_magnitude'] = np.tile(motion_magnitude, (1, 3))
-    
-    # # 7. 加速度变化率 (jerk)
-    # jerk = np.zeros_like(jacc)
-    # jerk[1:] = (jacc[1:] - jacc[:-1]) / dt
-    # jerk[0] = jerk[1]
-    # derived['jerk'] = jerk
-    
     return derived
 
-def create_time_sequences(features, targets, sequence_length=10, step=1):
+def create_time_sequences_with_future_target(data, features, targets, sequence_length=10, step=1):
     """
-    创建时序数据序列
+    创建包含未来目标位置的时序数据序列
     
     Parameters:
     -----------
+    data : np.ndarray
+        原始数据（用于获取jpos_d）
     features : np.ndarray
-        特征数据 (n_samples, n_features)
+        特征数据 [jpos, jvel, jpos_d, pos_error] (12维)
     targets : np.ndarray
-        目标数据 (n_samples, n_targets)
+        目标数据
     sequence_length : int
-        序列长度
+        历史序列长度
     step : int
-        步长（用于数据增强）
+        步长
         
     Returns:
     --------
     X_sequences : np.ndarray
-        时序特征 (n_sequences, sequence_length, n_features)
+        时序特征 (n_sequences, sequence_length+1, n_features)
     y_sequences : np.ndarray
         时序目标 (n_sequences, n_targets)
     """
     n_samples = features.shape[0]
-    n_features = features.shape[1]
+    n_features = features.shape[1]  # 12个特征: [jpos, jvel, jpos_d, pos_error]
     n_targets = targets.shape[1]
     
-    # 计算序列数量
-    # n_sequences = (n_samples - sequence_length) // step + 1
+    # 确保有足够的数据进行未来预测
     n_sequences = (n_samples - sequence_length) // step
     
-    # 初始化序列数组
-    X_sequences = np.zeros((n_sequences, sequence_length, n_features))
+    if n_sequences <= 0:
+        raise ValueError(f"Not enough data. Need at least {sequence_length + 1} samples, got {n_samples}")
+    
+    # 扩展序列长度以包含未来时刻
+    X_sequences = np.zeros((n_sequences, sequence_length + 1, n_features))
     y_sequences = np.zeros((n_sequences, n_targets))
     
-    # 创建序列
+    # 提取原始数据的关节期望位置
+    jpos_d_data = data[:, 194:197]  # 关节期望位置
+    
+    print(f"  Creating sequences with future target position:")
+    print(f"  - Historical steps (0-{sequence_length-1}): full state [jpos, jvel, jpos_d, pos_error]")
+    print(f"  - Future step ({sequence_length}): partial state [0, 0, future_jpos_d, 0]")
+    
     for i in range(n_sequences):
         start_idx = i * step
         end_idx = start_idx + sequence_length
+        future_idx = end_idx
         
-        X_sequences[i] = features[start_idx:end_idx]
-        # y_sequences[i] = targets[end_idx - 1]
-        y_sequences[i] = targets[end_idx]  #TODO
+        # 历史时刻：完整特征
+        X_sequences[i, :sequence_length, :] = features[start_idx:end_idx]
+        
+        # 未来时刻：只包含目标位置信息
+        future_features = np.zeros(n_features)
+        
+        if future_idx < n_samples:
+            # 在jpos_d位置（索引6:9）放置未来期望位置
+            future_jpos_d = jpos_d_data[future_idx]
+            future_features[6:9] = future_jpos_d
+            # 其他位置保持为0：jpos[0:3]=0, jvel[3:6]=0, pos_error[9:12]=0
+            
+        X_sequences[i, sequence_length, :] = future_features
+        
+        # 预测未来时刻的扭矩
+        if future_idx < n_samples:
+            y_sequences[i] = targets[future_idx]
+        else:
+            # 边界情况处理
+            y_sequences[i] = targets[end_idx - 1]
+    
+    print(f"  Generated {n_sequences} sequences")
+    print(f"  Input shape: ({n_sequences}, {sequence_length + 1}, {n_features})")
+    print(f"  Future step content: [0, 0, 0, 0, 0, 0, future_jpos_d[0], future_jpos_d[1], future_jpos_d[2], 0, 0, 0]")
     
     return X_sequences, y_sequences
 
@@ -319,6 +275,7 @@ class DataProcessor:
         self.sequence_length = config.get('sequence_length', 10)
         self.sequence_step = config.get('sequence_step', 1)
         self.include_derived = config.get('include_derived', True)
+        self.enable_future_prediction = config.get('enable_future_prediction', False)
         self.dt = config.get('dt', 0.001)  # 时间步长
         
         # 目标索引
@@ -328,6 +285,7 @@ class DataProcessor:
         print(f"  Feature type: {self.feature_type}")
         print(f"  Sequence length: {self.sequence_length}")
         print(f"  Include derived features: {self.include_derived}")
+        print(f"  Future prediction mode: {self.enable_future_prediction}")
         print(f"  Smoothing enabled: {self.smoothing_config is not None}")
     
     def apply_smoothing(self, data):
@@ -371,12 +329,10 @@ class DataProcessor:
     
     def extract_features(self, data):
         """提取特征"""
-        print(f"Extracting {self.feature_type} features...")
+        print(f"Extracting features...")
         
-        if self.feature_type == 'control_command':
-            base_features, feature_names = create_extended_features(data)
-        else:
-            base_features, feature_names = create_original_features(data)
+        # 始终使用扩展特征
+        base_features, feature_names = create_extended_features(data)
         
         # 添加衍生特征
         if self.include_derived:
@@ -427,15 +383,38 @@ class DataProcessor:
             print(f"  Removing {nan_mask.sum()} samples with NaN values")
             features = features[~nan_mask]
             targets = targets[~nan_mask]
+            data = data[~nan_mask]  # 也需要过滤原始数据
         
         # 创建时序序列
         if self.sequence_length > 1:
             print(f"  Creating time sequences (length={self.sequence_length}, step={self.sequence_step})")
-            X_seq, y_seq = create_time_sequences(
-                features, targets, 
-                self.sequence_length, 
-                self.sequence_step
-            )
+            
+            if self.enable_future_prediction:
+                # 使用未来预测模式
+                X_seq, y_seq = create_time_sequences_with_future_target(
+                    data, features, targets, 
+                    self.sequence_length, 
+                    self.sequence_step
+                )
+            else:
+                # 使用传统同步预测模式
+                n_samples = features.shape[0]
+                n_features = features.shape[1]
+                n_targets = targets.shape[1]
+                
+                n_sequences = (n_samples - self.sequence_length) // self.sequence_step + 1
+                
+                X_seq = np.zeros((n_sequences, self.sequence_length, n_features))
+                y_seq = np.zeros((n_sequences, n_targets))
+                
+                for i in range(n_sequences):
+                    start_idx = i * self.sequence_step
+                    end_idx = start_idx + self.sequence_length
+                    
+                    if end_idx <= n_samples:
+                        X_seq[i] = features[start_idx:end_idx]
+                        y_seq[i] = targets[end_idx - 1]  # 预测序列最后一个时刻
+            
             print(f"  Generated {X_seq.shape[0]} sequences")
         else:
             # 非时序模式
@@ -506,38 +485,7 @@ class DataProcessor:
             
             for file_name in file_list:
                 file_path = os.path.join(data_dir, file_name)
-                print(f"  Processing: {os.path.basename(file_path)}")
-                
-                # 加载单个文件数据
-                data = np.loadtxt(file_path, delimiter=',')
-                print(f"    Loaded data shape: {data.shape}")
-                
-                # 应用平滑
-                data = self.apply_smoothing(data)
-                
-                # 提取特征（每个文件独立处理）
-                features, names = self.extract_features(data)
-                targets = data[:, self.target_indices]
-                
-                # 处理NaN值
-                nan_mask = np.isnan(features).any(axis=1) | np.isnan(targets).any(axis=1)
-                if nan_mask.sum() > 0:
-                    print(f"    Removing {nan_mask.sum()} samples with NaN values")
-                    features = features[~nan_mask]
-                    targets = targets[~nan_mask]
-                
-                # 在单个文件内创建时序序列（避免跨文件问题）
-                if self.sequence_length > 1:
-                    print(f"    Creating time sequences (length={self.sequence_length}, step={self.sequence_step})")
-                    X_seq, y_seq = create_time_sequences(
-                        features, targets, 
-                        self.sequence_length, 
-                        self.sequence_step
-                    )
-                    print(f"    Generated {X_seq.shape[0]} sequences from this file")
-                else:
-                    X_seq = features[:, np.newaxis, :]
-                    y_seq = targets
+                X_seq, y_seq, names = self.process_single_file(file_path)
                 
                 # 添加到列表
                 X_list.append(X_seq)
@@ -637,6 +585,7 @@ class DataProcessor:
                 'n_features': len(feature_names),
                 'n_targets': 3,
                 'sequence_length': self.sequence_length,
+                'future_prediction': self.enable_future_prediction,
                 'train_samples': X_train.shape[0],
                 'val_samples': X_val.shape[0],
                 'test_samples': X_test.shape[0],
@@ -667,7 +616,7 @@ class DataProcessor:
             f.write(f"Number of samples: {dataset['metadata']['n_samples']}\n")
             f.write(f"Number of features: {dataset['metadata']['n_features']}\n")
             f.write(f"Sequence length: {dataset['metadata']['sequence_length']}\n")
-            f.write(f"Feature type: {self.feature_type}\n")
+            f.write(f"Future prediction mode: {dataset['metadata']['future_prediction']}\n")
             f.write(f"Include derived features: {self.include_derived}\n")
             f.write(f"Data split: train={dataset['metadata']['train_samples']}, ")
             f.write(f"val={dataset['metadata']['val_samples']}, ")
@@ -696,24 +645,23 @@ class DataProcessor:
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description='机器人扭矩数据预处理')
+    import config
+    parser = argparse.ArgumentParser(description='机器人扭矩数据预处理 - 支持未来预测模式')
     
-    parser.add_argument('--data_dir', type=str, required=True,
-                        help='原始数据目录路径')
-    parser.add_argument('--output_path', type=str, required=True,
-                        help='输出文件路径 (.pkl)')
-    parser.add_argument('--feature_type', type=str, default='control_command',
-                        choices=['control_command', 'original'],
-                        help='特征类型')
+    RAW_DATA = config.RAW_DATA
+    PROCESS_DATA = config.PROCESS_DATA
+
     parser.add_argument('--sequence_length', type=int, default=10,
-                        help='时序序列长度')
+                        help='历史序列长度')
     parser.add_argument('--sequence_step', type=int, default=1,
                         help='时序序列步长')
     parser.add_argument('--include_derived', action='store_true', default=True,
                         help='是否包含衍生特征')
+    parser.add_argument('--enable_future_prediction', action='store_true', default=True,
+                        help='启用未来预测模式')
     parser.add_argument('--train_split', type=float, default=0.8,
                         help='训练集比例')
-    parser.add_argument('--val_split', type=float, default=0.1,
+    parser.add_argument('--val_split', type=float, default=0.2,
                         help='验证集比例')
     parser.add_argument('--enable_smoothing', action='store_true',
                         help='启用数据平滑')
@@ -731,20 +679,22 @@ def main():
     
     # 创建处理配置
     config = {
-        'feature_type': args.feature_type,
+        'feature_type': 'control_command',  # 固定使用控制命令特征
         'sequence_length': args.sequence_length,
         'sequence_step': args.sequence_step,
         'include_derived': args.include_derived,
+        'enable_future_prediction': args.enable_future_prediction,
         'smoothing_config': smoothing_config,
         'dt': 0.001,  # 时间步长，根据实际情况调整
         'train_split': args.train_split,
         'val_split': args.val_split
     }
     
-    print("Robot Torque Data Preprocessing")
-    print("=" * 40)
-    print(f"Input directory: {args.data_dir}")
-    print(f"Output file: {args.output_path}")
+    print("Robot Torque Data Preprocessing - Future Prediction Mode")
+    print("=" * 60)
+    print(f"Input directory: {RAW_DATA}")
+    print(f"Output file: {PROCESS_DATA}")
+    print(f"Future prediction mode: {args.enable_future_prediction}")
     print(f"Configuration: {config}")
     print()
     
@@ -753,19 +703,21 @@ def main():
     
     # 处理数据集
     dataset = processor.process_dataset(
-        args.data_dir, 
+        RAW_DATA, 
         args.train_split, 
         args.val_split
     )
     
     # 保存数据集
-    processor.save_dataset(dataset, args.output_path)
+    processor.save_dataset(dataset,PROCESS_DATA)
     
-    print("\n" + "=" * 40)
+    print("\n" + "=" * 60)
     print("Data preprocessing completed successfully!")
-    print(f"Processed dataset saved to: {args.output_path}")
+    print(f"Processed dataset saved to: {PROCESS_DATA}")
     print(f"Dataset shape: X={dataset['X_train'].shape}, y={dataset['y_train'].shape}")
-    print("=" * 40)
+    if args.enable_future_prediction:
+        print("Future prediction mode: Sequence length includes +1 future target step")
+    print("=" * 60)
 
 if __name__ == "__main__":
     main()

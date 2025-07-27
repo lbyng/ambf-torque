@@ -12,7 +12,7 @@ import argparse
 class SimpleLSTM(nn.Module):
     """简单的LSTM扭矩预测模型"""
     
-    def __init__(self, input_dim, hidden_dim=64, num_layers=1, output_dim=3):
+    def __init__(self, input_dim, hidden_dim=128, num_layers=1, output_dim=3):
         super(SimpleLSTM, self).__init__()
         
         self.hidden_dim = hidden_dim
@@ -214,9 +214,9 @@ def main():
                         help='模型输出目录')
     parser.add_argument('--learning_rate', type=float, default=0.001,
                         help='学习率')
-    parser.add_argument('--batch_size', type=int, default=64,
+    parser.add_argument('--batch_size', type=int, default=512,
                         help='批次大小')
-    parser.add_argument('--num_epochs', type=int, default=50,
+    parser.add_argument('--num_epochs', type=int, default=100,
                         help='训练轮数')
     
     args = parser.parse_args()
