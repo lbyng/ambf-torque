@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import pickle
 import argparse
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import seaborn as sns
@@ -14,11 +15,11 @@ plt.rcParams['font.size'] = 10
 plt.rcParams['figure.dpi'] = 100
 
 # ========== 简单的LSTM模型 ==========
-class SimpleLSTM(nn.Module):
-    """简单的LSTM扭矩预测模型"""
+class TorqueLSTM(nn.Module):
+    """LSTM扭矩预测模型"""
     
     def __init__(self, input_dim, hidden_dim=128, num_layers=1, output_dim=3):
-        super(SimpleLSTM, self).__init__()
+        super(TorqueLSTM, self).__init__()
         
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
@@ -45,43 +46,57 @@ class SimpleLSTM(nn.Module):
         output = self.fc(lstm_out[:, -1, :])
         return output
 
-# ========== 增强测试器（支持批处理）==========
-class EnhancedTester:
-    """增强的测试器，包含批处理和可视化功能"""
+# ========== 测试器（支持批处理）==========
+class TorqueTester:
+    """测试器，包含批处理和可视化功能"""
     
-    def __init__(self, model_path, output_dir='./test_results', batch_size=None, use_cpu=False):
-        # 设备选择
-        if use_cpu:
-            self.device = torch.device('cpu')
-            print("Force using CPU for inference")
-        else:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            if torch.cuda.is_available():
-                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
-                print(f"GPU total memory: {gpu_memory:.1f} GB")
+    def __init__(self, model_path, batch_size):
+        # 自动设备选择
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # 自动设置批处理大小
-        if batch_size is None:
-            if self.device.type == 'cuda':
-                # 根据GPU内存自动调整
-                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
-                if gpu_memory < 8:
-                    self.batch_size = 500
-                else:
-                    self.batch_size = 1000
-            else:
-                self.batch_size = 2000  # CPU可以处理更大批次
+        if torch.cuda.is_available():
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            print(f"Using GPU, total memory: {gpu_memory:.1f} GB")
         else:
-            self.batch_size = batch_size
+            print("GPU not available, using CPU for inference")
         
-        self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
+        self.batch_size = batch_size
+        
+        # 自动根据模型文件名创建输出目录
+        self.model_path = model_path
+        self.output_dir = self._create_output_directory(model_path)
+        os.makedirs(self.output_dir, exist_ok=True)
         
         self.joint_names = ['Joint 1', 'Joint 2', 'Joint 3']
         self.joint_colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
         
         print(f"Using device: {self.device}, batch size: {self.batch_size}")
+        print(f"Output directory: {self.output_dir}")
         self.load_model(model_path)
+    
+    def _create_output_directory(self, model_path):
+        """
+        根据模型文件名创建输出目录
+        
+        Args:
+            model_path: 模型文件路径
+            
+        Returns:
+            完整的输出目录路径
+        """
+        # 提取模型文件名（不包含扩展名）
+        model_filename = os.path.basename(model_path)
+        model_name = os.path.splitext(model_filename)[0]  # 移除.pth扩展名
+        
+        # 构建完整的输出目录路径 (固定使用 ./test_results 作为基础目录)
+        base_output_dir = './test_results'
+        full_output_dir = os.path.join(base_output_dir, model_name)
+        
+        print(f"Model file: {model_filename}")
+        print(f"Model name: {model_name}")
+        print(f"Creating output directory: {full_output_dir}")
+        
+        return full_output_dir
     
     def load_model(self, model_path):
         """Load model"""
@@ -91,7 +106,7 @@ class EnhancedTester:
         
         # 重建模型
         input_dim = checkpoint['input_dim']
-        self.model = SimpleLSTM(input_dim=input_dim).to(self.device)
+        self.model = TorqueLSTM(input_dim=input_dim).to(self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.eval()
         
@@ -127,7 +142,7 @@ class EnhancedTester:
         return results
     
     def _batch_inference(self, X_test_numpy):
-        """Batch inference"""
+        """Batch inference with progress bar"""
         n_samples = X_test_numpy.shape[0]
         n_batches = (n_samples + self.batch_size - 1) // self.batch_size
         
@@ -135,26 +150,31 @@ class EnhancedTester:
         
         y_pred_scaled_list = []
         
-        for i in range(n_batches):
-            start_idx = i * self.batch_size
-            end_idx = min((i + 1) * self.batch_size, n_samples)
-            
-            # 当前批次数据
-            X_batch = torch.FloatTensor(X_test_numpy[start_idx:end_idx]).to(self.device)
-            
-            # 预测当前批次
-            with torch.no_grad():
-                y_pred_batch = self.model(X_batch).cpu().numpy()
-                y_pred_scaled_list.append(y_pred_batch)
-            
-            # 清理内存
-            del X_batch
-            if self.device.type == 'cuda':
-                torch.cuda.empty_cache()
-            
-            # 显示进度
-            if (i + 1) % 20 == 0 or (i + 1) == n_batches:
-                print(f"Inference progress: {i+1}/{n_batches} batches completed")
+        # 使用tqdm创建进度条
+        with tqdm(total=n_batches, desc="Inference Progress", unit="batch") as pbar:
+            for i in range(n_batches):
+                start_idx = i * self.batch_size
+                end_idx = min((i + 1) * self.batch_size, n_samples)
+                
+                # 当前批次数据
+                X_batch = torch.FloatTensor(X_test_numpy[start_idx:end_idx]).to(self.device)
+                
+                # 预测当前批次
+                with torch.no_grad():
+                    y_pred_batch = self.model(X_batch).cpu().numpy()
+                    y_pred_scaled_list.append(y_pred_batch)
+                
+                # 清理内存
+                del X_batch
+                if self.device.type == 'cuda':
+                    torch.cuda.empty_cache()
+                
+                # 更新进度条
+                pbar.update(1)
+                pbar.set_postfix({
+                    'Batch': f'{i+1}/{n_batches}',
+                    'Samples': f'{end_idx}/{n_samples}'
+                })
         
         # 合并所有预测结果
         return np.vstack(y_pred_scaled_list)
@@ -613,16 +633,9 @@ def load_dataset(dataset_path):
 def main():
     parser = argparse.ArgumentParser(description='LSTM Model Testing and Visualization')
     
-    parser.add_argument('--model_path', type=str, required=True,
-                        help='Path to trained model')
-    parser.add_argument('--dataset_path', type=str, required=True,
-                        help='Path to test dataset')
-    parser.add_argument('--output_dir', type=str, default='./test_results',
-                        help='Output directory for results')
-    parser.add_argument('--batch_size', type=int, default=None,
-                        help='Batch size for inference (auto-set by default)')
-    parser.add_argument('--use_cpu', action='store_true',
-                        help='Force CPU inference')
+    parser.add_argument('--model_path', type=str, required=True, help='Path to trained model')
+    parser.add_argument('--dataset_path', type=str, required=True, help='Path to test dataset')
+    parser.add_argument('--batch_size', type=int, default=512, help='Batch size for inference')
     
     args = parser.parse_args()
     
@@ -634,17 +647,15 @@ def main():
         dataset = load_dataset(args.dataset_path)
         
         # 创建测试器并测试
-        tester = EnhancedTester(
-            model_path=args.model_path, 
-            output_dir=args.output_dir,
+        tester = TorqueTester(
+            model_path=args.model_path,
             batch_size=args.batch_size,
-            use_cpu=args.use_cpu
         )
         results = tester.test(dataset)
         
         print("\n" + "=" * 50)
         print("Testing and visualization completed!")
-        print(f"All results saved to: {args.output_dir}")
+        print(f"All results saved to: {tester.output_dir}")
         print("Generated plots:")
         print("  1_prediction_scatter.png - Predicted vs True values comparison")
         print("  2_time_series.png - Time series prediction performance")
@@ -665,5 +676,6 @@ if __name__ == "__main__":
 
 
 '''
-python3 tester.py --model_path './simple_models/simple_lstm_model_20250727_174956.pth' --dataset_path './data/features/dataset.pkl'
+Usage examples:
+python3 tester.py --model_path './simple_models/simple_lstm_model_20250728_121432.pth' --dataset_path './data/features/dataset.pkl'
 '''

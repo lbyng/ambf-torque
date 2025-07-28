@@ -116,7 +116,7 @@ class DataSmoother:
             raise NotImplementedError("Moving average only supports axis=0")
 
 # ========== 特征工程函数 ==========
-def create_extended_features(data):
+def create_extended_features(data, include_tau=False):
     """
     创建扩展特征
     
@@ -124,11 +124,13 @@ def create_extended_features(data):
     -----------
     data : np.ndarray
         原始数据
+    include_tau : bool
+        是否包含扭矩作为特征
         
     Returns:
     --------
     features : np.ndarray
-        处理后的特征 [jpos, jvel, jpos_d]
+        处理后的特征
     feature_names : list
         特征名称列表
     """
@@ -137,19 +139,22 @@ def create_extended_features(data):
     jvel = data[:, 162:165]    # 关节速度 [3:6]
     jpos_d = data[:, 194:197]  # 关节期望位置 [6:9]
     
-    # 组合特征
-    features = np.hstack([
-        jpos,            # 3 features - 关节实际位置
-        jvel,            # 3 features - 关节速度
-        jpos_d           # 3 features - 关节期望位置
-    ])
-    
-    # 特征名称
+    # 基础特征列表
+    feature_list = [jpos, jvel, jpos_d]
     feature_names = [
         'jpos[0]', 'jpos[1]', 'jpos[2]',
         'jvel[0]', 'jvel[1]', 'jvel[2]',
         'jpos_d[0]', 'jpos_d[1]', 'jpos_d[2]'
     ]
+    
+    # 添加扭矩特征
+    if include_tau:
+        tau = data[:, 114:117]  # 关节扭矩
+        feature_list.append(tau)
+        feature_names.extend(['tau[0]', 'tau[1]', 'tau[2]'])
+    
+    # 组合所有特征
+    features = np.hstack(feature_list)
     
     return features, feature_names
 
@@ -180,7 +185,7 @@ def calculate_derived_features(data, dt=0.001):
     
     return derived
 
-def create_time_sequences_with_future_target(data, features, targets, sequence_length=10, step=1):
+def create_time_sequences_with_future_target(data, features, targets, sequence_length=10, step=1, include_tau=False):
     """
     创建包含未来目标位置的时序数据序列
     
@@ -189,13 +194,15 @@ def create_time_sequences_with_future_target(data, features, targets, sequence_l
     data : np.ndarray
         原始数据（用于获取jpos_d）
     features : np.ndarray
-        特征数据 [jpos, jvel, jpos_d, pos_error] (12维)
+        特征数据
     targets : np.ndarray
         目标数据
     sequence_length : int
         历史序列长度
     step : int
         步长
+    include_tau : bool
+        是否包含tau特征
         
     Returns:
     --------
@@ -205,7 +212,7 @@ def create_time_sequences_with_future_target(data, features, targets, sequence_l
         时序目标 (n_sequences, n_targets)
     """
     n_samples = features.shape[0]
-    n_features = features.shape[1]  # 12个特征: [jpos, jvel, jpos_d, pos_error]
+    n_features = features.shape[1]
     n_targets = targets.shape[1]
     
     # 确保有足够的数据进行未来预测
@@ -221,9 +228,19 @@ def create_time_sequences_with_future_target(data, features, targets, sequence_l
     # 提取原始数据的关节期望位置
     jpos_d_data = data[:, 194:197]  # 关节期望位置
     
-    print(f"  Creating sequences with future target position:")
-    print(f"  - Historical steps (0-{sequence_length-1}): full state [jpos, jvel, jpos_d, pos_error]")
-    print(f"  - Future step ({sequence_length}): partial state [0, 0, future_jpos_d, 0]")
+    if include_tau:
+        if n_features == 15:  # jpos, jvel, jpos_d, pos_error, tau
+            print(f"  Creating sequences with tau:")
+            print(f"  - Historical steps (0-{sequence_length-1}): [jpos, jvel, jpos_d, pos_error, tau]")
+            print(f"  - Future step ({sequence_length}): [0, 0, future_jpos_d, 0, 0]")
+        else:
+            print(f"  Creating sequences with tau ({n_features} features):")
+            print(f"  - Historical steps: full state")
+            print(f"  - Future step: partial state with future_jpos_d")
+    else:
+        print(f"  Creating sequences without tau:")
+        print(f"  - Historical steps (0-{sequence_length-1}): [jpos, jvel, jpos_d, pos_error]")
+        print(f"  - Future step ({sequence_length}): [0, 0, future_jpos_d, 0]")
     
     for i in range(n_sequences):
         start_idx = i * step
@@ -240,7 +257,7 @@ def create_time_sequences_with_future_target(data, features, targets, sequence_l
             # 在jpos_d位置（索引6:9）放置未来期望位置
             future_jpos_d = jpos_d_data[future_idx]
             future_features[6:9] = future_jpos_d
-            # 其他位置保持为0：jpos[0:3]=0, jvel[3:6]=0, pos_error[9:12]=0
+            # 其他位置保持为0
             
         X_sequences[i, sequence_length, :] = future_features
         
@@ -253,7 +270,6 @@ def create_time_sequences_with_future_target(data, features, targets, sequence_l
     
     print(f"  Generated {n_sequences} sequences")
     print(f"  Input shape: ({n_sequences}, {sequence_length + 1}, {n_features})")
-    print(f"  Future step content: [0, 0, 0, 0, 0, 0, future_jpos_d[0], future_jpos_d[1], future_jpos_d[2], 0, 0, 0]")
     
     return X_sequences, y_sequences
 
@@ -276,6 +292,7 @@ class DataProcessor:
         self.sequence_step = config.get('sequence_step', 1)
         self.include_derived = config.get('include_derived', True)
         self.enable_future_prediction = config.get('enable_future_prediction', False)
+        self.include_tau = config.get('include_tau', False)
         self.dt = config.get('dt', 0.001)  # 时间步长
         
         # 目标索引
@@ -285,6 +302,7 @@ class DataProcessor:
         print(f"  Feature type: {self.feature_type}")
         print(f"  Sequence length: {self.sequence_length}")
         print(f"  Include derived features: {self.include_derived}")
+        print(f"  Include tau features: {self.include_tau}")
         print(f"  Future prediction mode: {self.enable_future_prediction}")
         print(f"  Smoothing enabled: {self.smoothing_config is not None}")
     
@@ -331,8 +349,8 @@ class DataProcessor:
         """提取特征"""
         print(f"Extracting features...")
         
-        # 始终使用扩展特征
-        base_features, feature_names = create_extended_features(data)
+        # 使用扩展特征，可能包含tau
+        base_features, feature_names = create_extended_features(data, include_tau=self.include_tau)
         
         # 添加衍生特征
         if self.include_derived:
@@ -394,7 +412,8 @@ class DataProcessor:
                 X_seq, y_seq = create_time_sequences_with_future_target(
                     data, features, targets, 
                     self.sequence_length, 
-                    self.sequence_step
+                    self.sequence_step,
+                    include_tau=self.include_tau
                 )
             else:
                 # 使用传统同步预测模式
@@ -586,6 +605,7 @@ class DataProcessor:
                 'n_targets': 3,
                 'sequence_length': self.sequence_length,
                 'future_prediction': self.enable_future_prediction,
+                'include_tau': self.include_tau,
                 'train_samples': X_train.shape[0],
                 'val_samples': X_val.shape[0],
                 'test_samples': X_test.shape[0],
@@ -617,6 +637,7 @@ class DataProcessor:
             f.write(f"Number of features: {dataset['metadata']['n_features']}\n")
             f.write(f"Sequence length: {dataset['metadata']['sequence_length']}\n")
             f.write(f"Future prediction mode: {dataset['metadata']['future_prediction']}\n")
+            f.write(f"Include tau features: {dataset['metadata']['include_tau']}\n")
             f.write(f"Include derived features: {self.include_derived}\n")
             f.write(f"Data split: train={dataset['metadata']['train_samples']}, ")
             f.write(f"val={dataset['metadata']['val_samples']}, ")
@@ -646,29 +667,31 @@ class DataProcessor:
 def main():
     """主函数"""
     import config
-    parser = argparse.ArgumentParser(description='机器人扭矩数据预处理 - 支持未来预测模式')
+    parser = argparse.ArgumentParser(description='机器人扭矩数据预处理 - 支持tau特征')
     
     RAW_DATA = config.RAW_DATA
     PROCESS_DATA = config.PROCESS_DATA
 
-    parser.add_argument('--sequence_length', type=int, default=10,
+    parser.add_argument('--sequence_length', type=int, default=20,
                         help='历史序列长度')
     parser.add_argument('--sequence_step', type=int, default=1,
                         help='时序序列步长')
     parser.add_argument('--include_derived', action='store_true', default=True,
                         help='是否包含衍生特征')
+    parser.add_argument('--include_tau', action='store_true', default=True,
+                        help='是否包含tau作为特征')
     parser.add_argument('--enable_future_prediction', action='store_true', default=True,
                         help='启用未来预测模式')
     parser.add_argument('--train_split', type=float, default=0.8,
                         help='训练集比例')
     parser.add_argument('--val_split', type=float, default=0.2,
                         help='验证集比例')
-    parser.add_argument('--enable_smoothing', action='store_true',
+    parser.add_argument('--enable_smoothing', action='store_true', default=True,
                         help='启用数据平滑')
     
     args = parser.parse_args()
     
-    # 配置平滑参数
+    # 配置平滑参数 - 包含tau的平滑
     smoothing_config = None
     if args.enable_smoothing:
         smoothing_config = {
@@ -683,6 +706,7 @@ def main():
         'sequence_length': args.sequence_length,
         'sequence_step': args.sequence_step,
         'include_derived': args.include_derived,
+        'include_tau': args.include_tau,
         'enable_future_prediction': args.enable_future_prediction,
         'smoothing_config': smoothing_config,
         'dt': 0.001,  # 时间步长，根据实际情况调整
@@ -690,11 +714,13 @@ def main():
         'val_split': args.val_split
     }
     
-    print("Robot Torque Data Preprocessing - Future Prediction Mode")
+    print("Robot Torque Data Preprocessing - With Tau Features Support")
     print("=" * 60)
     print(f"Input directory: {RAW_DATA}")
     print(f"Output file: {PROCESS_DATA}")
+    print(f"Include tau features: {args.include_tau}")
     print(f"Future prediction mode: {args.enable_future_prediction}")
+    print(f"Smoothing enabled: {args.enable_smoothing}")
     print(f"Configuration: {config}")
     print()
     
@@ -709,14 +735,19 @@ def main():
     )
     
     # 保存数据集
-    processor.save_dataset(dataset,PROCESS_DATA)
+    processor.save_dataset(dataset, PROCESS_DATA)
     
     print("\n" + "=" * 60)
     print("Data preprocessing completed successfully!")
     print(f"Processed dataset saved to: {PROCESS_DATA}")
     print(f"Dataset shape: X={dataset['X_train'].shape}, y={dataset['y_train'].shape}")
+    print(f"Feature names: {dataset['feature_names']}")
+    if args.include_tau:
+        print("✓ Tau features included in the dataset")
+    if args.enable_smoothing:
+        print("✓ Data smoothing applied (including tau)")
     if args.enable_future_prediction:
-        print("Future prediction mode: Sequence length includes +1 future target step")
+        print("✓ Future prediction mode: Sequence length includes +1 future target step")
     print("=" * 60)
 
 if __name__ == "__main__":
